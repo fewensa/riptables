@@ -8,6 +8,6 @@ edition = "2018"
 text-reader = "0.1"
 regex = "0.2"
 nix = "0.7.0"
-string-builder = "0.2.0"
+rstring-builder = "0.1"
 lazy_static = "0.2.8"
 

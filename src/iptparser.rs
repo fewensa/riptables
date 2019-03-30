@@ -1,8 +1,8 @@
-use string_builder::Builder;
 use text_reader::TextReader;
 
 use crate::error::{RIPTAnalysisError, RIPTAnalysisResult};
 use crate::rule::{Archive, RIPTInterface, RIPTRule};
+use rstring_builder::StringBuilder;
 
 pub fn parse_rules(text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {
   let mut rets = vec![];
@@ -47,7 +47,7 @@ fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
   let mut psmp = vec![];
   let mut entry = false;
 
-  let mut builder = Builder::default();
+  let mut builder = StringBuilder::new();
   let mut iptrtup = IPTRTup::new();
   let mut times = 0;
   let mut negate = false;
@@ -96,13 +96,13 @@ fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
               negate = false;
               continue;
             }
-            iptrtup.arg = builder.string().unwrap();
-            builder = Builder::default();
+            iptrtup.arg = builder.string();
+            builder.clear();
             times = 1;
           }
           1 => {
-            iptrtup.value.push(builder.string().unwrap());
-            builder = Builder::default();
+            iptrtup.value.push(builder.string());
+            builder.clear();
             times = 0;
           }
           _ => {}
@@ -115,7 +115,7 @@ fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
       _ => return Err(RIPTAnalysisError::UnexpectedOutput(text.clone()))
     }
   }
-  iptrtup.value.push(builder.string().unwrap());
+  iptrtup.value.push(builder.string());
   psmp.push(iptrtup.clone());
 
 //  println!("{:#?}", psmp);

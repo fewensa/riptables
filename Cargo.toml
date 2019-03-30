@@ -5,7 +5,7 @@ authors = ["fewensa <fewensa@enoa.io>"]
 edition = "2018"
 
 [dependencies]
-text-reader = {path="../text-reader"}
+text-reader = "0.1"
 regex = "0.2"
 nix = "0.7.0"
 string-builder = "0.2.0"

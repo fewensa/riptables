@@ -43,11 +43,11 @@ fn nat() {
 fn test_list() {
   let table = "nat";
   let name = "TESTNAT";
-  riptables().new_chain(table, name);
-  riptables().insert(table, name, "-j ACCEPT", 1);
+  riptables().new_chain(table, name).unwrap();
+  riptables().insert(table, name, "-j ACCEPT", 1).unwrap();
   let rules = riptables().list_chains(table, name).unwrap();
-  riptables().delete(table, name, "-j ACCEPT");
-  riptables().delete_chain(table, name);
+  riptables().delete(table, name, "-j ACCEPT").unwrap();
+  riptables().delete_chain(table, name).unwrap();
 
   assert_eq!(rules.len(), 2);
 

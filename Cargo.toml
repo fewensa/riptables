@@ -3,6 +3,7 @@ name = "riptables"
 version = "0.1.0"
 authors = ["fewensa <fewensa@protonmail.com>"]
 description = "Rust iptables"
+homepage = "https://github.com/fewensa/riptables"
 repository = "https://github.com/fewensa/riptables"
 license = "MIT"
 keywords = ["iptables", "netfilter", "bindings"]

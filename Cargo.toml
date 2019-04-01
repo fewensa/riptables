@@ -14,8 +14,6 @@ edition = "2018"
 
 [dependencies]
 text-reader = "0.1"
-regex = "0.2"
-nix = "0.7.0"
 rstring-builder = "0.1.3"
-lazy_static = "0.2.8"
+nix = "0.7.0"
 

@@ -1,16 +1,12 @@
-#[macro_use]
-extern crate lazy_static;
-
 use std::ffi::OsStr;
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::process::Command;
 
 use nix::fcntl::{flock, FlockArg};
-use regex::{Match, Regex};
 
 use error::{RIPTError, RIPTResult};
-use rule::{Archive, RIPTInterface, RIPTRule};
+use rule::{Archive, RIPTRule};
 
 mod iptparser;
 pub mod error;
@@ -23,29 +19,6 @@ const BUILTIN_CHAINS_MANGLE: &'static [&'static str] = &["PREROUTING", "OUTPUT",
 const BUILTIN_CHAINS_NAT: &'static [&'static str] = &["PREROUTING", "POSTROUTING", "OUTPUT"];
 const BUILTIN_CHAINS_RAW: &'static [&'static str] = &["PREROUTING", "OUTPUT"];
 const BUILTIN_CHAINS_SECURITY: &'static [&'static str] = &["INPUT", "OUTPUT", "FORWARD"];
-
-
-lazy_static! {
-    static ref RE_SPLIT: Regex = Regex::new(r#"["'].+?["']|[^ ]+"#).unwrap();
-}
-
-trait SplitQuoted {
-  fn split_quoted(&self) -> Vec<&str>;
-}
-
-impl SplitQuoted for str {
-  fn split_quoted(&self) -> Vec<&str> {
-    RE_SPLIT
-      // Iterate over matched segments
-      .find_iter(self)
-      // Get match as str
-      .map(|m| Match::as_str(&m))
-      // Remove any surrounding quotes (they will be reinserted by `Command`)
-      .map(|s| s.trim_matches(|c| c == '"' || c == '\''))
-      // Collect
-      .collect::<Vec<_>>()
-  }
-}
 
 
 pub struct RIPTables {
@@ -68,13 +41,8 @@ pub struct RIPTables {
 pub fn new(ipv6: bool) -> RIPTResult<RIPTables> {
   let cmd = if ipv6 { "ip6tables" } else { "iptables" };
   let version_output = Command::new(cmd).arg("--version").output()?;
-  let re = Regex::new(r"v(\d+)\.(\d+)\.(\d+)")?;
   let version_string = String::from_utf8_lossy(&version_output.stdout).into_owned();
-  let versions = re.captures(&version_string).ok_or("invalid version number")?;
-  let v_major = versions.get(1).ok_or("unable to get major version number")?.as_str().parse::<i32>()?;
-  let v_minor = versions.get(2).ok_or("unable to get minor version number")?.as_str().parse::<i32>()?;
-  let v_patch = versions.get(3).ok_or("unable to get patch version number")?.as_str().parse::<i32>()?;
-
+  let (v_major, v_minor, v_patch) = iptparser::iptables_version(version_string)?;
 
   Ok(RIPTables {
     cmd,
@@ -84,10 +52,136 @@ pub fn new(ipv6: bool) -> RIPTResult<RIPTables> {
 }
 
 impl RIPTables {
+  pub fn execute<T>(&self, caller: T) -> RIPTResult<(i32, String)> where T: Fn(&mut Command) -> &mut Command {
+    IptablesCaller::new(self.cmd, caller).call(self.has_wait)
+  }
+
+  pub fn get_policy<S>(&self, table: S, chain: S) -> RIPTResult<Option<String>> where S: AsRef<OsStr> + Clone {
+    let bchs = self::builtin_chains(table.clone())?;
+    if !bchs.iter().as_slice().contains(&&self::to_string(chain.clone())[..]) {
+      return Err(RIPTError::Other("given chain is not a default chain in the given table, can't get policy"));
+    }
+
+    let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S").arg(chain.clone()))?;
+    if code != 0 {
+      return Err(RIPTError::Stderr(output));
+    }
+    let rules = iptparser::parse_rules(self::to_string(table.clone()), output)?;
+    Ok(rules.into_iter()
+      .find(|item| item.archive == Archive::Policy && item.chain == self::to_string(chain.clone()))
+      .map(|item| item.jump))
+  }
+
+  pub fn set_policy<S>(&self, table: S, chain: S, policy: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    let bchs = self::builtin_chains(table.clone())?;
+    if !bchs.iter().as_slice().contains(&&self::to_string(chain.clone())[..]) {
+      return Err(RIPTError::Other("given chain is not a default chain in the given table, can't get policy"));
+    }
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-P").arg(chain.clone()).arg(policy.clone()))?;
+    Ok(code == 0)
+  }
+
+  pub fn insert<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    let rule_vec = iptparser::split_quoted(rule);
+    let pstr = position.to_string();
+    let args = &[
+      &[
+        "-t",
+        table.as_ref().to_str().unwrap(),
+        "-I",
+        chain.as_ref().to_str().unwrap(),
+        &pstr
+      ],
+      rule_vec.iter().map(|item| &item[..]).collect::<Vec<&str>>().as_slice()
+    ].concat();
+    let (code, _output) = self.execute(|iptables| iptables.args(args))?;
+    Ok(code == 0)
+  }
+
+  pub fn insert_unique<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    if self.exists(table.clone(), chain.clone(), rule.clone())? {
+      return Ok(true);
+    }
+    self.insert(table.clone(), chain.clone(), rule.clone(), position)
+  }
+
+  pub fn replace<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    let rule_vec = iptparser::split_quoted(rule);
+    let pstr = position.to_string();
+    let args = &[
+      &[
+        "-t",
+        table.as_ref().to_str().unwrap(),
+        "-R",
+        chain.as_ref().to_str().unwrap(),
+        &pstr
+      ],
+      rule_vec.iter().map(|item| &item[..]).collect::<Vec<&str>>().as_slice()
+    ].concat();
+    let (code, _output) = self.execute(|iptables| iptables.args(args))?;
+    Ok(code == 0)
+  }
+
+  pub fn append<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    let rule_vec = iptparser::split_quoted(rule);
+    let args = &[
+      &[
+        "-t",
+        table.as_ref().to_str().unwrap(),
+        "-A",
+        chain.as_ref().to_str().unwrap(),
+      ],
+      rule_vec.iter().map(|item| &item[..]).collect::<Vec<&str>>().as_slice()
+    ].concat();
+    let (code, _output) = self.execute(|iptables| iptables.args(args))?;
+    Ok(code == 0)
+  }
+
+  pub fn append_unique<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    if self.exists(table.clone(), chain.clone(), rule.clone())? {
+      return Ok(true);
+    }
+    self.append(table.clone(), chain.clone(), rule.clone())
+  }
+
+  pub fn append_replace<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    if self.exists(table.clone(), chain.clone(), rule.clone())? {
+      if !self.delete(table.clone(), chain.clone(), rule.clone())? {
+        return Ok(false);
+      }
+    }
+    self.append(table, chain, rule)
+  }
+
+  pub fn delete<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    let rule_vec = iptparser::split_quoted(rule);
+    let args = &[
+      &[
+        "-t",
+        table.as_ref().to_str().unwrap(),
+        "-D",
+        chain.as_ref().to_str().unwrap()
+      ],
+      rule_vec.iter().map(|item| &item[..]).collect::<Vec<&str>>().as_slice()
+    ].concat();
+    let (code, _output) = self.execute(|iptables| iptables.args(args))?;
+    Ok(code == 0)
+  }
+
+  pub fn delete_all<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+    while self.exists(table.clone(), chain.clone(), rule.clone())? {
+      self.delete(table.clone(), chain.clone(), rule.clone())?;
+    }
+    Ok(true)
+  }
+
   pub fn list<S>(&self, table: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
-    let stdout = self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
+    let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
 //    let sodt = "-P OUTPUT  ACCEPT".to_string();
-    Ok(iptparser::parse_rules(stdout)?)
+    if code != 0 {
+      return Err(RIPTError::Stderr(output));
+    }
+    Ok(iptparser::parse_rules(self::to_string(table), output)?)
   }
 
   pub fn chain_names<S>(&self, table: S) -> RIPTResult<Vec<String>> where S: AsRef<OsStr> + Clone {
@@ -97,66 +191,78 @@ impl RIPTables {
       .collect::<Vec<String>>())
   }
 
-  pub fn chains<S>(&self, table: S, chain: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
-    let stdout = self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S").arg(chain.clone()))?;
-    Ok(iptparser::parse_rules(stdout)?)
+  pub fn list_chains<S>(&self, table: S, chain: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
+    let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S").arg(chain.clone()))?;
+    if code != 0 {
+      return Err(RIPTError::Stderr(output));
+    }
+    Ok(iptparser::parse_rules(self::to_string(table), output)?)
   }
 
   pub fn new_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-N").arg(chain.clone()))?;
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-N").arg(chain.clone()))?;
+    Ok(code == 0)
   }
 
   pub fn delete_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-X").arg(chain.clone()))?;
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-X").arg(chain.clone()))?;
+    Ok(code == 0)
   }
 
   pub fn rename_chain<S>(&self, table: S, old_chain: S, new_chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-E").arg(old_chain.clone()).arg(new_chain.clone()))?;
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-E").arg(old_chain.clone()).arg(new_chain.clone()))?;
+    Ok(code == 0)
   }
 
   pub fn flush_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F").arg(chain.clone()))?;
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F").arg(chain.clone()))?;
+    Ok(code == 0)
   }
 
   pub fn exists_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    let result = self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-L").arg(chain.clone()));
-    // fixme: Ok(false)
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-L").arg(chain.clone()))?;
+    Ok(code == 0)
   }
 
   pub fn flush_table<S>(&self, table: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F"))?;
-    Ok(true)
+    let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F"))?;
+    Ok(code == 0)
   }
 
   pub fn tables<S>(&self, table: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
-    let stdout = self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
-    Ok(iptparser::parse_rules(stdout)?)
+    let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
+    if code != 0 {
+      return Err(RIPTError::Stderr(output));
+    }
+    Ok(iptparser::parse_rules(self::to_string(table.clone()), output)?)
   }
 
-  pub fn exists_rule<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
+  pub fn exists<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     if !self.has_check {
       return self.exists_old_version(table, chain, rule);
     }
 
-    let args = &[&["-t", table.as_ref().to_str().unwrap(), "-C", chain.as_ref().to_str().unwrap()], rule.as_ref().to_str().unwrap().split_quoted().as_slice()].concat();
-    self.call(|iptables| iptables.args(args))?;
-    Ok(true)
+    let rule_vec = iptparser::split_quoted(rule);
+    let args = &[
+      &[
+        "-t",
+        table.as_ref().to_str().unwrap(),
+        "-C",
+        chain.as_ref().to_str().unwrap()
+      ],
+      rule_vec.iter().map(|item| &item[..]).collect::<Vec<&str>>().as_slice()
+    ].concat();
+    let (code, _output) = self.execute(|iptables| iptables.args(args))?;
+    Ok(code == 0)
   }
-
 
   fn exists_old_version<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
-    let output = self.call(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
+    let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
+    if code != 0 {
+      return Ok(false);
+    }
     let exists = output.contains(&format!("-A {} {}", chain.as_ref().to_str().unwrap(), rule.as_ref().to_str().unwrap()));
     Ok(exists)
-  }
-
-  fn call<T>(&self, caller: T) -> RIPTResult<String> where T: Fn(&mut Command) -> &mut Command {
-    IptablesCaller::new(self.cmd, caller).call(self.has_wait)
   }
 }
 
@@ -173,7 +279,7 @@ impl<T> IptablesCaller<T> where T: Fn(&mut Command) -> &mut Command {
     }
   }
 
-  fn call(&mut self, has_wait: bool) -> RIPTResult<String> {
+  fn call(&mut self, has_wait: bool) -> RIPTResult<(i32, String)> {
     let command = (self.fill)(&mut self.command);
 
     let mut file_lock = None;
@@ -210,18 +316,28 @@ impl<T> IptablesCaller<T> where T: Fn(&mut Command) -> &mut Command {
     match status {
       Some(0) => {
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        Ok(stdout)
+        Ok((0, stdout))
       }
       Some(code) => {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        let msg = format!("Command execute faild: {}:{}", code, stderr);
-        let m = Box::leak(msg.into_boxed_str());
-        Err(RIPTError::Other(m))
+        Ok((code, stderr))
       }
       None => Err(RIPTError::Other("None output code"))
     }
   }
 }
 
+fn builtin_chains<S>(table: S) -> RIPTResult<&'static [&'static str]> where S: AsRef<OsStr> + Clone {
+  match &self::to_string(table)[..] {
+    "filter" => Ok(BUILTIN_CHAINS_FILTER),
+    "mangle" => Ok(BUILTIN_CHAINS_MANGLE),
+    "nat" => Ok(BUILTIN_CHAINS_NAT),
+    "raw" => Ok(BUILTIN_CHAINS_RAW),
+    "security" => Ok(BUILTIN_CHAINS_SECURITY),
+    _ => Err(RIPTError::Other("given table is not supported by iptables")),
+  }
+}
 
-
+fn to_string<S>(text: S) -> String where S: AsRef<OsStr> {
+  text.as_ref().to_str().unwrap().to_string()
+}

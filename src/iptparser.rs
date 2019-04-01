@@ -1,10 +1,12 @@
+use std::ffi::OsStr;
+
+use rstring_builder::StringBuilder;
 use text_reader::TextReader;
 
-use crate::error::{RIPTAnalysisError, RIPTAnalysisResult};
+use crate::error::{RIPTAnalysisError, RIPTAnalysisResult, RIPTError, RIPTResult};
 use crate::rule::{Archive, RIPTInterface, RIPTRule};
-use rstring_builder::StringBuilder;
 
-pub fn parse_rules(text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {
+pub fn parse_rules(table: String, text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {
   let mut rets = vec![];
   let mut reader = TextReader::new(text);
   let mut builder = vec![];
@@ -17,7 +19,7 @@ pub fn parse_rules(text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {
           .map(|item: &Option<char>| item.unwrap())
           .into_iter()
           .collect();
-        let rule = self::to_rule(line_text)?;
+        let rule = self::to_rule(table.clone(), line_text)?;
         rets.push(rule);
 
         builder.clear();
@@ -32,14 +34,14 @@ pub fn parse_rules(text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {
     .into_iter()
     .collect();
   if !line_text.is_empty() {
-    let rule = self::to_rule(line_text)?;
+    let rule = self::to_rule(table.clone(), line_text)?;
     rets.push(rule);
   }
 
   Ok(rets)
 }
 
-fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
+fn to_rule(table: String, text: String) -> RIPTAnalysisResult<RIPTRule> {
 //  println!("{:?}", text);
 
   let mut reader = TextReader::new(text.clone());
@@ -124,6 +126,7 @@ fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
   let mut rule = RIPTRule {
     origin: text.clone(),
     archive: Archive::Policy,
+    table,
     chain: "".to_string(),
     input: None,
     output: None,
@@ -161,6 +164,97 @@ fn to_rule(text: String) -> RIPTAnalysisResult<RIPTRule> {
 
   Ok(rule)
 }
+
+
+pub fn split_quoted<S>(text: S) -> Vec<String> where S: AsRef<OsStr> {
+  let mut rets = vec![];
+  let mut reader = TextReader::new(text);
+  let mut quoted_p = false; // "
+  let mut quoted_b = false; // '
+  let mut builder = StringBuilder::new();
+  while reader.has_next() {
+    match reader.next() {
+      Some('"') => {
+        if quoted_b {
+          builder.append('"');
+          continue;
+        }
+        quoted_p = !quoted_p;
+        continue;
+      }
+      Some('\'') => {
+        if quoted_p {
+          builder.append('\'');
+          continue;
+        }
+        quoted_b = !quoted_b;
+        continue;
+      }
+      Some(' ') => {
+        if quoted_p || quoted_b {
+          builder.append(' ');
+          continue;
+        }
+        rets.push(builder.string());
+        builder.clear();
+        continue;
+      }
+      Some(ch) => {
+        builder.append(ch);
+        continue;
+      }
+      None => continue
+    }
+  }
+  if !builder.is_empty() {
+    let string = builder.string();
+    rets.push(string);
+    builder.clear();
+  }
+
+  rets
+}
+
+
+pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
+  let mut reader = TextReader::new(text);
+  let mut version = Vec::with_capacity(3);
+  let mut builder = StringBuilder::new();
+  let mut entry = false;
+  while reader.has_next() {
+    match reader.next() {
+      Some('v') => entry = true,
+      Some('.') => {
+        if !entry {
+          continue;
+        }
+        let vti = builder.string();
+        let vtn = vti.parse::<i32>()?;
+        version.push(vtn);
+        builder.clear();
+      }
+      Some(' ') => {
+        if !entry {
+          continue;
+        }
+        let vti = builder.string();
+        let vtn = vti.parse::<i32>()?;
+        version.push(vtn);
+        builder.clear();
+        return Ok((version[0], version[1], version[2]));
+      }
+      Some(ch) => {
+        if !entry {
+          continue;
+        }
+        builder.append(ch);
+      }
+      None => continue
+    }
+  }
+  Err(RIPTError::Other("Parse iptables version fail"))
+}
+
 
 #[derive(Debug)]
 struct IPTRTup {

@@ -5,10 +5,10 @@ use std::string::FromUtf8Error;
 #[derive(Debug)]
 pub enum RIPTError {
   Io(io::Error),
-  Regex(regex::Error),
   Nix(nix::Error),
   Parse(num::ParseIntError),
   Analysis(RIPTAnalysisError),
+  Stderr(String),
   Other(&'static str),
 }
 
@@ -19,10 +19,10 @@ impl fmt::Display for RIPTError {
   fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
     match *self {
       RIPTError::Io(ref err) => write!(f, "{}", err),
-      RIPTError::Regex(ref err) => write!(f, "{}", err),
       RIPTError::Nix(ref err) => write!(f, "{}", err),
       RIPTError::Parse(ref err) => write!(f, "{}", err),
       RIPTError::Analysis(ref err) => write!(f, "{}", err),
+      RIPTError::Stderr(ref message) => write!(f, "{}", message),
       RIPTError::Other(ref message) => write!(f, "{}", message)
     }
   }
@@ -32,10 +32,10 @@ impl error::Error for RIPTError {
   fn description(&self) -> &str {
     match *self {
       RIPTError::Io(ref err) => err.description(),
-      RIPTError::Regex(ref err) => err.description(),
       RIPTError::Nix(ref err) => err.description(),
       RIPTError::Parse(ref err) => err.description(),
       RIPTError::Analysis(ref err) => err.description(),
+      RIPTError::Stderr(ref message) => message,
       RIPTError::Other(ref message) => message,
     }
   }
@@ -43,7 +43,6 @@ impl error::Error for RIPTError {
   fn cause(&self) -> Option<&error::Error> {
     match *self {
       RIPTError::Io(ref err) => Some(err),
-      RIPTError::Regex(ref err) => Some(err),
       RIPTError::Nix(ref err) => Some(err),
       RIPTError::Parse(ref err) => Some(err),
       RIPTError::Analysis(ref err) => Some(err),
@@ -55,12 +54,6 @@ impl error::Error for RIPTError {
 impl convert::From<io::Error> for RIPTError {
   fn from(err: io::Error) -> Self {
     RIPTError::Io(err)
-  }
-}
-
-impl convert::From<regex::Error> for RIPTError {
-  fn from(err: regex::Error) -> Self {
-    RIPTError::Regex(err)
   }
 }
 

@@ -23,6 +23,7 @@ pub struct Extension {
 pub struct RIPTRule {
   pub origin: String,
   pub archive: Archive,
+  pub table: String,
   pub chain: String,
   pub input: Option<RIPTInterface>,
   pub output: Option<RIPTInterface>,

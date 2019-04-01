@@ -21,3 +21,6 @@ text-reader = "0.1"
 rstring-builder = "0.1.3"
 nix = "0.7.0"
 
+[lib]
+doctest = false
+

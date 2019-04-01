@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use rstring_builder::StringBuilder;
 use text_reader::TextReader;
 
-use crate::error::{RIPTAnalysisError, RIPTAnalysisResult, RIPTError, RIPTResult};
+use crate::error::{RIPTAnalysisError, RIPTAnalysisResult, RIPTResult};
 use crate::rule::{Archive, RIPTInterface, RIPTRule};
 
 pub fn parse_rules(table: String, text: String) -> RIPTAnalysisResult<Vec<RIPTRule>> {

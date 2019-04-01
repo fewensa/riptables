@@ -52,10 +52,26 @@ pub fn new(ipv6: bool) -> RIPTResult<RIPTables> {
 }
 
 impl RIPTables {
+  /// Execute iptables command
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.execute(|iptables| iptables.args(&["-t", "nat", "-A", "TESTNAT", "-j", "ACCEPT"])).is_ok(), true);
+  /// ```
   pub fn execute<T>(&self, caller: T) -> RIPTResult<(i32, String)> where T: Fn(&mut Command) -> &mut Command {
     IptablesCaller::new(self.cmd, caller).call(self.has_wait)
   }
 
+  /// Get the default policy for a table/chain.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert!(iptables.get_policy("filter", "INPUT").is_ok());
+  /// ```
   pub fn get_policy<S>(&self, table: S, chain: S) -> RIPTResult<Option<String>> where S: AsRef<OsStr> + Clone {
     let bchs = self::builtin_chains(table.clone())?;
     if !bchs.iter().as_slice().contains(&&self::to_string(chain.clone())[..]) {
@@ -72,6 +88,14 @@ impl RIPTables {
       .map(|item| item.jump))
   }
 
+  /// Set the default policy for a table/chain.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(riptables().set_policy("mangle", "FORWARD", "DROP").unwrap(), true);
+  /// ```
   pub fn set_policy<S>(&self, table: S, chain: S, policy: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let bchs = self::builtin_chains(table.clone())?;
     if !bchs.iter().as_slice().contains(&&self::to_string(chain.clone())[..]) {
@@ -81,6 +105,15 @@ impl RIPTables {
     Ok(code == 0)
   }
 
+  /// Inserts `rule` in the `position` to the table/chain.
+  /// Returns `true` if the rule is inserted.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.insert("nat", "TESTNAT", "-j ACCEPT", 1).unwrap(), true);
+  /// ```
   pub fn insert<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let rule_vec = iptparser::split_quoted(rule);
     let pstr = position.to_string();
@@ -98,6 +131,16 @@ impl RIPTables {
     Ok(code == 0)
   }
 
+
+  /// Inserts `rule` in the `position` to the table/chain if it does not exist.
+  /// Returns `true` if the rule is inserted.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.insert_unique("nat", "TESTNAT", "-j ACCEPT", 1).unwrap(), true);
+  /// ```
   pub fn insert_unique<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     if self.exists(table.clone(), chain.clone(), rule.clone())? {
       return Ok(true);
@@ -105,6 +148,15 @@ impl RIPTables {
     self.insert(table.clone(), chain.clone(), rule.clone(), position)
   }
 
+  /// Replaces `rule` in the `position` to the table/chain.
+  /// Returns `true` if the rule is replaced.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.replace("nat", "TESTNAT", "-j ACCEPT", 1).unwrap(), true);
+  /// ```
   pub fn replace<S>(&self, table: S, chain: S, rule: S, position: i32) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let rule_vec = iptparser::split_quoted(rule);
     let pstr = position.to_string();
@@ -122,6 +174,16 @@ impl RIPTables {
     Ok(code == 0)
   }
 
+
+  /// Appends `rule` to the table/chain.
+  /// Returns `true` if the rule is appended.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.append("nat", "TESTNAT", "-m comment --comment \"double-quoted comment\" -j ACCEPT").unwrap(), true);
+  /// ```
   pub fn append<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let rule_vec = iptparser::split_quoted(rule);
     let args = &[
@@ -137,6 +199,15 @@ impl RIPTables {
     Ok(code == 0)
   }
 
+  /// Appends `rule` to the table/chain if it does not exist.
+  /// Returns `true` if the rule is appended.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.append_unique("nat", "TESTNAT", "-m comment --comment \"double-quoted comment\" -j ACCEPT").unwrap(), true);
+  /// ```
   pub fn append_unique<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     if self.exists(table.clone(), chain.clone(), rule.clone())? {
       return Ok(true);
@@ -144,6 +215,15 @@ impl RIPTables {
     self.append(table.clone(), chain.clone(), rule.clone())
   }
 
+  /// Appends or replaces `rule` to the table/chain if it does not exist.
+  /// Returns `true` if the rule is appended or replaced.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(iptables.append_replace("nat", "TESTNAT", "-m comment --comment \"double-quoted comment\" -j ACCEPT").unwrap(), true);
+  /// ```
   pub fn append_replace<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     if self.exists(table.clone(), chain.clone(), rule.clone())? {
       if !self.delete(table.clone(), chain.clone(), rule.clone())? {
@@ -153,6 +233,15 @@ impl RIPTables {
     self.append(table, chain, rule)
   }
 
+  /// Deletes `rule` from the table/chain.
+  /// Returns `true` if the rule is deleted.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(riptables.delete("nat", "TESTNAT", "-j ACCEPT").unwrap(), true);
+  /// ```
   pub fn delete<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let rule_vec = iptparser::split_quoted(rule);
     let args = &[
@@ -168,6 +257,12 @@ impl RIPTables {
     Ok(code == 0)
   }
 
+  /// Deletes all repetition of the `rule` from the table/chain.
+  /// Returns `true` if the rules are deleted.
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(riptables.delete_all("nat", "TESTNAT", "-j ACCEPT").unwrap(), true);
+  /// ```
   pub fn delete_all<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     while self.exists(table.clone(), chain.clone(), rule.clone())? {
       self.delete(table.clone(), chain.clone(), rule.clone())?;
@@ -175,6 +270,37 @@ impl RIPTables {
     Ok(true)
   }
 
+  /// Lists rules in the table/chain.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use riptables::rule::{Archive, RIPTRule};
+  ///
+  /// let iptables = riptables::new(false).unwrap();
+  ///
+  /// let table = "nat";
+  /// let name = "TESTNAT";
+  /// riptables.new_chain(table, name).unwrap();
+  /// riptables.insert(table, name, "-j ACCEPT", 1).unwrap();
+  /// let rules: Vec<RIPTRule> = riptables.list(table, name).unwrap();
+  /// riptables.delete(table, name, "-j ACCEPT").unwrap();
+  /// riptables.delete_chain(table, name).unwrap();
+  ///
+  /// assert_eq!(rules.len(), 2);
+  ///
+  /// for rule in rules {
+  ///   println!("{:?}", rule);
+  ///
+  ///   assert_eq!(rule.table, "nat".to_string());
+  ///   assert_eq!(rule.chain, name.to_string());
+  ///   match rule.archive {
+  ///     Archive::NewChain => assert_eq!(rule.origin, "-N TESTNAT".to_string()),
+  ///     Archive::Append => assert_eq!(rule.origin, "-A TESTNAT -j ACCEPT".to_string()),
+  ///     _ => {}
+  ///   }
+  /// }
+  /// ```
   pub fn list<S>(&self, table: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
     let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
 //    let sodt = "-P OUTPUT  ACCEPT".to_string();
@@ -184,6 +310,15 @@ impl RIPTables {
     Ok(iptparser::parse_rules(self::to_string(table), output)?)
   }
 
+
+  /// Lists the name of each chain in the table.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// let names = iptables.chain_names("nat");
+  /// ```
   pub fn chain_names<S>(&self, table: S) -> RIPTResult<Vec<String>> where S: AsRef<OsStr> + Clone {
     Ok(self.list(table)?.iter()
       .filter(|item| item.archive == Archive::Policy || item.archive == Archive::NewChain)
@@ -191,6 +326,15 @@ impl RIPTables {
       .collect::<Vec<String>>())
   }
 
+  /// Lists rules in the table/chain.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use riptables::rule::RIPTRule;
+  /// let iptables = riptables::new(false).unwrap();
+  /// let rules: Vec<RIPTRule> = riptables.list_chains(table, name).unwrap();
+  /// ```
   pub fn list_chains<S>(&self, table: S, chain: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
     let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S").arg(chain.clone()))?;
     if code != 0 {
@@ -199,37 +343,101 @@ impl RIPTables {
     Ok(iptparser::parse_rules(self::to_string(table), output)?)
   }
 
+  /// Creates a new user-defined chain.
+  /// Returns `true` if the chain is created.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.new_chain("nat", "TESTNAT");
+  /// ```
   pub fn new_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-N").arg(chain.clone()))?;
     Ok(code == 0)
   }
 
+  /// Deletes a user-defined chain in the table.
+  /// Returns `true` if the chain is deleted.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.delete_chain("nat", "TESTNAT");
+  /// ```
   pub fn delete_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-X").arg(chain.clone()))?;
     Ok(code == 0)
   }
 
+  /// Renames a chain in the table.
+  /// Returns `true` if the chain is renamed.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.rename_chain("nat", "TESTNAT", "OTHERNAME");
+  /// ```
   pub fn rename_chain<S>(&self, table: S, old_chain: S, new_chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-E").arg(old_chain.clone()).arg(new_chain.clone()))?;
     Ok(code == 0)
   }
 
+  /// Flushes (deletes all rules) a chain.
+  /// Returns `true` if the chain is flushed.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.flush_chain("nat", "TESTNAT");
+  /// ```
   pub fn flush_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F").arg(chain.clone()))?;
     Ok(code == 0)
   }
 
+  /// Checks for the existence of the `chain` in the table.
+  /// Returns true if the chain exists.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.exists_chain("nat", "TESTNAT");
+  /// ```
   pub fn exists_chain<S>(&self, table: S, chain: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-L").arg(chain.clone()))?;
     Ok(code == 0)
   }
 
+  /// Flushes all chains in a table.
+  /// Returns `true` if the chains are flushed.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// iptables.flush_table("nat");
+  /// ```
   pub fn flush_table<S>(&self, table: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     let (code, _output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-F"))?;
     Ok(code == 0)
   }
 
-  pub fn tables<S>(&self, table: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
+  /// Lists rules in the table.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use riptables::rule::RIPTRule;
+  ///
+  /// let iptables = riptables::new(false).unwrap();
+  /// let rule: Vec<RIPTRule> = iptables.list_tables("nat").unwrap();
+  /// ```
+  pub fn list_tables<S>(&self, table: S) -> RIPTResult<Vec<RIPTRule>> where S: AsRef<OsStr> + Clone {
     let (code, output) = self.execute(|iptables| iptables.arg("-t").arg(table.clone()).arg("-S"))?;
     if code != 0 {
       return Err(RIPTError::Stderr(output));
@@ -237,6 +445,15 @@ impl RIPTables {
     Ok(iptparser::parse_rules(self::to_string(table.clone()), output)?)
   }
 
+  /// Checks for the existence of the `rule` in the table/chain.
+  /// Returns true if the rule exists.
+  /// 
+  /// # Example
+  /// 
+  /// ```rust
+  /// let iptables = riptables::new(false).unwrap();
+  /// assert_eq!(riptables.exists(table, "TESTNAT", "-j ACCEPT").unwrap(), true);
+  /// ```
   pub fn exists<S>(&self, table: S, chain: S, rule: S) -> RIPTResult<bool> where S: AsRef<OsStr> + Clone {
     if !self.has_check {
       return self.exists_old_version(table, chain, rule);

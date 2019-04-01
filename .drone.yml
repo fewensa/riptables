@@ -89,7 +89,7 @@ steps:
       - apt install -y iptables
       - iptables -S
       - iptables --version
-      - cargo test
+      - cargo test -- --nocapture --exact
       - cargo package
 
 trigger:

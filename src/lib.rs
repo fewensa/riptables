@@ -516,7 +516,7 @@ impl<T> IptablesCaller<T> where T: Fn(&mut Command) -> &mut Command {
       }
     }
 
-    println!("{:?}", command);
+//    println!("{:?}", command);
     let output = command.output()?;
     if !has_wait {
       if let Some(f) = file_lock {

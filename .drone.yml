@@ -59,6 +59,7 @@ steps:
       - apt update
       - apt install -y iptables
       - iptables -S
+        - iptables --version
       - cargo test
       - sh -f /root/.cargo/credentials
       - cargo publish
@@ -87,6 +88,7 @@ steps:
       - apt update
       - apt install -y iptables
       - iptables -S
+      - iptables --version
       - cargo test
       - cargo package
 

@@ -221,6 +221,7 @@ pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
   let mut version = Vec::with_capacity(3);
   let mut builder = StringBuilder::new();
   let mut entry = false;
+//  let mut legacy = false;
   while reader.has_next() {
     match reader.next() {
       Some('v') => entry = true,
@@ -237,11 +238,8 @@ pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
         if !entry {
           continue;
         }
-        let vti = builder.string();
-        let vtn = vti.parse::<i32>()?;
-        version.push(vtn);
-        builder.clear();
-        return Ok((version[0], version[1], version[2]));
+//        legacy = true;
+        break;
       }
       Some(ch) => {
         if !entry {
@@ -252,7 +250,12 @@ pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
       None => continue
     }
   }
-  Err(RIPTError::Other("Parse iptables version fail"))
+
+  let vti = builder.string();
+  let vtn = vti.parse::<i32>()?;
+  version.push(vtn);
+  builder.clear();
+  return Ok((version[0], version[1], version[2]));
 }
 
 

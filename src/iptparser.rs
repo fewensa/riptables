@@ -241,6 +241,7 @@ pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
 //        legacy = true;
         break;
       }
+      Some('\n') => continue,
       Some(ch) => {
         if !entry {
           continue;
@@ -252,7 +253,7 @@ pub fn iptables_version(text: String) -> RIPTResult<(i32, i32, i32)> {
   }
 
   let vti = builder.string();
-  println!("WHAT VERSION: {:?}", vti);
+//  println!("WHAT VERSION: {:?}", vti);
   let vtn = vti.parse::<i32>()?;
   version.push(vtn);
   builder.clear();
